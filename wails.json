@@ -1,0 +1,12 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Tasks",
+  "outputfilename": "Tasks",
+  "frontend:dir": "frontend",
+  "frontend:install": "",
+  "frontend:build": "",
+  "wailsjsdir": "./build/wailsjs",
+  "author": {
+    "name": "Axo-xD"
+  }
+}
