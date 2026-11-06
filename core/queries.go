@@ -23,7 +23,10 @@ type ProjectSummary struct {
 	Pct         int    `json:"pct"`
 }
 
+// ImportantTask is a row in Important tasks: a task, or (Kind "milestone") a
+// milestone, whose ID is then the milestone's.
 type ImportantTask struct {
+	Kind        string     `json:"kind"` // task or milestone
 	Project     ProjectRef `json:"project"`
 	ID          int        `json:"id"`
 	Title       string     `json:"title"`
@@ -32,6 +35,27 @@ type ImportantTask struct {
 	Deadline    Date       `json:"deadline"`
 	DaysLate    int        `json:"daysLate"`
 	Priority    Priority   `json:"priority"`
+	TasksDone   int        `json:"tasksDone"` // milestones: linked tasks
+	TasksTotal  int        `json:"tasksTotal"`
+}
+
+// DashboardOptions are the user's dashboard settings.
+type DashboardOptions struct {
+	IncludeSubtasks   bool // subtasks with a deadline appear in Important tasks
+	IncludeMilestones bool // open milestones appear in Important tasks
+}
+
+type MilestoneRef struct {
+	ID    int    `json:"id"`
+	Title string `json:"title"`
+}
+
+// MilestoneView is a milestone with the progress of the tasks linked to it.
+type MilestoneView struct {
+	Milestone
+	Done       bool `json:"done"`
+	TasksDone  int  `json:"tasksDone"`
+	TasksTotal int  `json:"tasksTotal"`
 }
 
 type ImportantGroup struct {
@@ -71,16 +95,17 @@ type SubtaskRow struct {
 }
 
 type Card struct {
-	ID         int          `json:"id"`
-	Title      string       `json:"title"`
-	Priority   Priority     `json:"priority"`
-	Deadline   *Date        `json:"deadline"`
-	WaitingFor string       `json:"waitingFor"`
-	Done       bool         `json:"done"`
-	Completed  *Stamp       `json:"completed"`
-	SubDone    int          `json:"subDone"`
-	SubTotal   int          `json:"subTotal"`
-	Subtasks   []SubtaskRow `json:"subtasks"`
+	ID         int           `json:"id"`
+	Title      string        `json:"title"`
+	Priority   Priority      `json:"priority"`
+	Deadline   *Date         `json:"deadline"`
+	WaitingFor string        `json:"waitingFor"`
+	Done       bool          `json:"done"`
+	Completed  *Stamp        `json:"completed"`
+	SubDone    int           `json:"subDone"`
+	SubTotal   int           `json:"subTotal"`
+	Subtasks   []SubtaskRow  `json:"subtasks"`
+	Milestone  *MilestoneRef `json:"milestone"`
 }
 
 type BoardColumn struct {
@@ -90,9 +115,11 @@ type BoardColumn struct {
 }
 
 type Board struct {
-	Project ProjectSummary `json:"project"`
-	Columns []BoardColumn  `json:"columns"`
-	Notes   []Note         `json:"notes"`
+	Project    ProjectSummary  `json:"project"`
+	Start      Date            `json:"start"` // the project's creation date, for the timeline
+	Columns    []BoardColumn   `json:"columns"`
+	Milestones []MilestoneView `json:"milestones"` // by date
+	Notes      []Note          `json:"notes"`
 }
 
 type TaskView struct {
@@ -109,6 +136,7 @@ type TaskView struct {
 	Created     Stamp    `json:"created"`
 	Updated     Stamp    `json:"updated"`
 	Completed   *Stamp   `json:"completed"`
+	Milestone   int      `json:"milestone"` // 0 = none
 }
 
 type TaskRef struct {
@@ -117,22 +145,34 @@ type TaskRef struct {
 }
 
 type TaskDetail struct {
-	Project   ProjectRef   `json:"project"`
-	Columns   []Column     `json:"columns"`
-	Task      TaskView     `json:"task"`
-	Ancestors []TaskRef    `json:"ancestors"` // root first
-	Subtasks  []SubtaskRow `json:"subtasks"`  // whole tree, depth-first
-	SubDone   int          `json:"subDone"`   // direct subtasks only
-	SubTotal  int          `json:"subTotal"`
-	Notes     []Note       `json:"notes"`
+	Project    ProjectRef     `json:"project"`
+	Columns    []Column       `json:"columns"`
+	Task       TaskView       `json:"task"`
+	Ancestors  []TaskRef      `json:"ancestors"` // root first
+	Subtasks   []SubtaskRow   `json:"subtasks"`  // whole tree, depth-first
+	SubDone    int            `json:"subDone"`   // direct subtasks only
+	SubTotal   int            `json:"subTotal"`
+	Notes      []Note         `json:"notes"`
+	Milestones []MilestoneRef `json:"milestones"` // the project's, for the milestone picker
 }
 
-func (s *Store) Dashboard() Dashboard {
+func (s *Store) Dashboard(opts DashboardOptions) Dashboard {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
 	today := DateOf(now)
 	endOfWeek := today.AddDate(0, 0, (7-int(today.Weekday()))%7) // through Sunday
+	group := func(dl Date) (g, daysLate int) {
+		switch {
+		case dl.Before(today.Time):
+			return 0, int(today.Sub(dl.Time).Hours()/24 + 0.5)
+		case dl.Equal(today.Time):
+			return 1, 0
+		case !dl.After(endOfWeek):
+			return 2, 0
+		}
+		return 3, 0
+	}
 	d := Dashboard{Today: today}
 	groups := []ImportantGroup{
 		{Key: "overdue", Label: "Overdue"},
@@ -157,24 +197,26 @@ func (s *Store) Dashboard() Dashboard {
 			if col.Type == Active && t.Parent == nil {
 				active = append(active, t)
 			}
-			if t.Deadline == nil {
+			if t.Deadline == nil || (t.Parent != nil && !opts.IncludeSubtasks) {
 				continue
 			}
-			it := ImportantTask{Project: ref, ID: t.ID, Title: t.Title, StatusName: col.Name, Deadline: *t.Deadline, Priority: t.Priority}
+			it := ImportantTask{Kind: "task", Project: ref, ID: t.ID, Title: t.Title, StatusName: col.Name, Deadline: *t.Deadline, Priority: t.Priority}
 			if t.Parent != nil {
 				it.ParentTitle = ps.tasks[*t.Parent].Title
 			}
-			g := 3
-			switch dl := t.Deadline.Time; {
-			case dl.Before(today.Time):
-				g = 0
-				it.DaysLate = int(today.Sub(dl).Hours()/24 + 0.5)
-			case dl.Equal(today.Time):
-				g = 1
-			case !dl.After(endOfWeek):
-				g = 2
-			}
+			g, late := group(*t.Deadline)
+			it.DaysLate = late
 			groups[g].Tasks = append(groups[g].Tasks, it)
+		}
+		if opts.IncludeMilestones {
+			for _, m := range ps.milestoneViews() {
+				if m.Done {
+					continue
+				}
+				g, late := group(m.Date)
+				groups[g].Tasks = append(groups[g].Tasks, ImportantTask{Kind: "milestone", Project: ref, ID: m.ID, Title: m.Title,
+					StatusName: "Milestone", Deadline: m.Date, DaysLate: late, TasksDone: m.TasksDone, TasksTotal: m.TasksTotal})
+			}
 		}
 		if len(active) > 0 {
 			sort.Slice(active, func(i, j int) bool {
@@ -198,6 +240,9 @@ func (s *Store) Dashboard() Dashboard {
 		sort.Slice(ts, func(a, b int) bool {
 			if !ts[a].Deadline.Equal(ts[b].Deadline.Time) {
 				return ts[a].Deadline.Before(ts[b].Deadline.Time)
+			}
+			if ts[a].Kind != ts[b].Kind {
+				return ts[a].Kind == "milestone" // a milestone heads its day
 			}
 			if ts[a].Priority.rank() != ts[b].Priority.rank() {
 				return ts[a].Priority.rank() < ts[b].Priority.rank()
@@ -228,12 +273,17 @@ func (s *Store) Board(slug string) (Board, error) {
 	if err != nil {
 		return Board{}, err
 	}
-	b := Board{Project: ps.summary(), Notes: sortedNotes(ps.p.Notes)}
+	b := Board{Project: ps.summary(), Start: DateOf(ps.p.Created.Time), Milestones: ps.milestoneViews(), Notes: sortedNotes(ps.p.Notes)}
 	byStatus := map[string][]Card{}
 	for _, t := range ps.children(0) {
 		c := Card{ID: t.ID, Title: t.Title, Priority: t.Priority, Deadline: t.Deadline, WaitingFor: string(t.WaitingFor), Done: ps.isDone(t), Completed: t.Completed}
 		c.SubDone, c.SubTotal = ps.progress(t.ID)
 		c.Subtasks = ps.subtaskRows(t.ID, 0)
+		if t.Milestone != nil {
+			if m, ok := ps.p.milestone(*t.Milestone); ok {
+				c.Milestone = &MilestoneRef{ID: m.ID, Title: m.Title}
+			}
+		}
 		byStatus[t.Status] = append(byStatus[t.Status], c)
 	}
 	for _, col := range ps.p.Columns {
@@ -261,6 +311,12 @@ func (s *Store) Task(slug string, id int) (TaskDetail, error) {
 		Subtasks: ps.subtaskRows(t.ID, 0),
 		Notes:    sortedNotes(t.Notes),
 	}
+	if t.Milestone != nil {
+		d.Task.Milestone = *t.Milestone
+	}
+	for _, m := range ps.p.Milestones {
+		d.Milestones = append(d.Milestones, MilestoneRef{ID: m.ID, Title: m.Title})
+	}
 	d.SubDone, d.SubTotal = ps.progress(t.ID)
 	for cur := t; cur.Parent != nil; {
 		cur = ps.tasks[*cur.Parent]
@@ -279,6 +335,26 @@ func (s *Store) sortedProjects(includeArchived bool) []*projectState {
 	sort.Slice(out, func(i, j int) bool {
 		return strings.ToLower(out[i].p.Name) < strings.ToLower(out[j].p.Name)
 	})
+	return out
+}
+
+// milestoneViews returns the project's milestones by date, with the progress
+// of the tasks linked to each.
+func (ps *projectState) milestoneViews() []MilestoneView {
+	var out []MilestoneView
+	for _, m := range ps.p.Milestones {
+		v := MilestoneView{Milestone: m, Done: m.Completed != nil}
+		for _, t := range ps.tasks {
+			if t.Milestone != nil && *t.Milestone == m.ID {
+				v.TasksTotal++
+				if ps.isDone(t) {
+					v.TasksDone++
+				}
+			}
+		}
+		out = append(out, v)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Date.Before(out[j].Date.Time) })
 	return out
 }
 

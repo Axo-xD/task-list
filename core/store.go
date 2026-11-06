@@ -24,25 +24,31 @@ type projectState struct {
 
 // Store is the in-memory index of one library folder.
 type Store struct {
-	mu       sync.Mutex
-	root     string
-	now      func() time.Time
+	mu   sync.Mutex
+	root string
+	now  func() time.Time
+	index
+}
+
+// index is everything read from the library in one pass.
+type index struct {
 	projects map[string]*projectState
+	inbox    *Inbox // nil when inbox.yaml exists but cannot be read
 	problems []Problem
 	seen     map[string][32]byte // every file read, for change detection
 }
 
+// Open reads the library folder, which must exist: a missing folder (say, an
+// unplugged drive) is reported rather than silently created.
 func Open(root string) (*Store, error) {
 	return openWithClock(root, time.Now)
 }
 
 func openWithClock(root string, now func() time.Time) (*Store, error) {
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return nil, err
+	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+		return nil, fmt.Errorf("the library folder %s was not found", root)
 	}
-	s := &Store{root: root, now: now}
-	s.projects, s.problems, s.seen = load(root)
-	return s, nil
+	return &Store{root: root, now: now, index: load(root)}, nil
 }
 
 func (s *Store) Root() string { return s.root }
@@ -58,10 +64,10 @@ func (s *Store) Problems() []Problem {
 func (s *Store) Rescan() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	projects, problems, seen := load(s.root)
-	changed := len(seen) != len(s.seen)
+	idx := load(s.root)
+	changed := len(idx.seen) != len(s.seen)
 	if !changed {
-		for path, h := range seen {
+		for path, h := range idx.seen {
 			if s.seen[path] != h {
 				changed = true
 				break
@@ -69,16 +75,16 @@ func (s *Store) Rescan() bool {
 		}
 	}
 	if changed {
-		s.projects, s.problems, s.seen = projects, problems, seen
+		s.index = idx
 	}
 	return changed
 }
 
 func (s *Store) reloadLocked() {
-	s.projects, s.problems, s.seen = load(s.root)
+	s.index = load(s.root)
 }
 
-func load(root string) (map[string]*projectState, []Problem, map[string][32]byte) {
+func load(root string) index {
 	projects := map[string]*projectState{}
 	var problems []Problem
 	seen := map[string][32]byte{}
@@ -89,7 +95,17 @@ func load(root string) (map[string]*projectState, []Problem, map[string][32]byte
 	dirs, err := os.ReadDir(root)
 	if err != nil {
 		problem(root, "cannot read library folder: %v", err)
-		return projects, problems, seen
+		return index{projects: projects, problems: problems, seen: seen}
+	}
+	inbox := &Inbox{file: fileInfo{path: filepath.Join(root, inboxFile)}}
+	if _, err := os.Stat(inbox.file.path); err == nil {
+		fi, err := readYAML(inbox.file.path, inbox)
+		seen[inbox.file.path] = fi.hash
+		inbox.file = fi
+		if err != nil {
+			problem(fi.path, "%v", err)
+			inbox = nil
+		}
 	}
 	for _, d := range dirs {
 		if !d.IsDir() || strings.HasPrefix(d.Name(), ".") {
@@ -158,12 +174,18 @@ func load(root string) (map[string]*projectState, []Problem, map[string][32]byte
 				problem(tpath, "unknown priority %q; treated as medium", t.Priority)
 				t.Priority = Medium
 			}
+			if t.Milestone != nil {
+				if _, ok := p.milestone(*t.Milestone); !ok {
+					problem(tpath, "milestone %d not found; shown without a milestone", *t.Milestone)
+					t.Milestone = nil
+				}
+			}
 			ps.tasks[t.ID] = t
 		}
 		fixParents(ps, func(t *Task, msg string) { problem(t.file.path, "%s", msg) })
 	}
 	sort.Slice(problems, func(i, j int) bool { return problems[i].Path < problems[j].Path })
-	return projects, problems, seen
+	return index{projects: projects, inbox: inbox, problems: problems, seen: seen}
 }
 
 // fixParents detaches tasks whose parent is missing or that sit in a parent

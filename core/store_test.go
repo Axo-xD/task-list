@@ -243,7 +243,7 @@ func TestDashboard(t *testing.T) {
 	task(archived, "Hidden", "todo", "2026-10-01", High, 0)
 	s.UpdateProject(archived, ProjectPatch{Archived: ptr(true)})
 
-	d := s.Dashboard()
+	d := s.Dashboard(DashboardOptions{IncludeSubtasks: true})
 	got := map[string][]string{}
 	for _, g := range d.Groups {
 		for _, it := range g.Tasks {

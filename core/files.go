@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -51,15 +52,19 @@ func encodeYAML(v any, orig *yaml.Node) ([]byte, *yaml.Node, error) {
 		return nil, nil, err
 	}
 	if orig != nil {
-		known := map[string]*yaml.Node{}
+		written := map[string]*yaml.Node{}
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			known[n.Content[i].Value] = n.Content[i]
+			written[n.Content[i].Value] = n.Content[i]
 		}
+		owned := ownedKeys(v)
 		for i := 0; i+1 < len(orig.Content); i += 2 {
 			k := orig.Content[i]
-			if nk, ok := known[k.Value]; ok {
+			if nk, ok := written[k.Value]; ok {
 				nk.HeadComment, nk.LineComment, nk.FootComment = k.HeadComment, k.LineComment, k.FootComment
 				continue
+			}
+			if owned[k.Value] {
+				continue // ours, and now empty (omitempty): drop it
 			}
 			n.Content = append(n.Content, k, orig.Content[i+1])
 		}
@@ -72,6 +77,23 @@ func encodeYAML(v any, orig *yaml.Node) ([]byte, *yaml.Node, error) {
 	}
 	enc.Close()
 	return buf.Bytes(), &n, nil
+}
+
+// ownedKeys lists every YAML key v's struct type can write, including keys
+// left out because they are empty.
+func ownedKeys(v any) map[string]bool {
+	t := reflect.TypeOf(v)
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	keys := map[string]bool{}
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+		if name != "" && name != "-" {
+			keys[name] = true
+		}
+	}
+	return keys
 }
 
 // writeYAML saves v over fi.path. It refuses with ErrConflict when the file on
@@ -125,15 +147,23 @@ func atomicWrite(path string, data []byte) error {
 
 var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
 
+// latin spells common accented letters in plain a-z, so "Tromsø" becomes
+// "tromso" rather than "troms".
+var latin = strings.NewReplacer("æ", "ae", "ø", "o", "å", "a", "ä", "a", "ö", "o", "ü", "u",
+	"é", "e", "è", "e", "ê", "e", "á", "a", "à", "a", "í", "i", "ó", "o", "ú", "u", "ñ", "n", "ç", "c", "ß", "ss")
+
 // slugify turns a title into a short, Windows-safe file or folder name.
 func slugify(s string, max int) string {
-	s = nonSlug.ReplaceAllString(strings.ToLower(s), "-")
+	s = nonSlug.ReplaceAllString(latin.Replace(strings.ToLower(s)), "-")
 	s = strings.Trim(s, "-")
 	if len(s) > max {
 		s = strings.TrimRight(s[:max], "-")
 	}
 	return s
 }
+
+// Slug turns a name into a short id made of a-z, 0-9 and dashes.
+func Slug(name string) string { return slugify(name, 40) }
 
 func taskFileName(id int, title string) string {
 	if s := slugify(title, 40); s != "" {

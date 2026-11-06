@@ -37,10 +37,11 @@ change. Run the tests with `go test ./...`.
 ```
 <your library folder>/
   website-redesign/              one folder per project (copy, zip or move it)
-    project.yaml                 name, colour, deadline, columns, description, notes
+    project.yaml                 name, colour, deadline, columns, milestones, description, notes
     tasks/
       4-review-homepage-copy.yaml
       5-hero-headline.yaml       subtasks are files too, pointing at their parent
+  inbox.yaml                     the quick list (since 0.3)
   .trash/                        deleted tasks end up here
 ```
 
@@ -58,6 +59,7 @@ position: 1000               # order within its column (or among its siblings)
 created: 2026-10-14T09:00
 updated: 2026-10-28T16:22
 completed: null              # set when the task enters a Done-type column
+milestone: 2                 # optional (since 0.3): id of a milestone in project.yaml
 description: |-
   Go through all the page copy before the site goes to build.
 notes:
@@ -67,6 +69,28 @@ notes:
     text: First pass done.
 ```
 
+Milestones are listed in `project.yaml` (since 0.3; left out when there are
+none):
+
+```yaml
+milestones:
+  - id: 2
+    title: SAT
+    date: 2026-11-20
+    description: Site acceptance test with the customer
+    completed: null          # set when marked as reached
+```
+
+The quick list, `inbox.yaml` at the library root:
+
+```yaml
+items:
+  - id: 1
+    text: Ring Ola about the van
+    done: false
+    created: 2026-11-06T09:12
+```
+
 Rules:
 
 - The files are the source of truth. The app reads them all at start-up and
@@ -74,8 +98,8 @@ Rules:
   (OneDrive, Dropbox, Syncthing) show up straight away.
 - The app never overwrites a file that changed since it last read it; it
   reloads instead. Keys it does not know about, and comments, are kept.
-- A file it cannot read is listed under Projects → Library folder and left
-  alone until you fix it. Sync-conflict copies are listed there too.
+- A file it cannot read is listed under Settings → Files with problems and
+  left alone until you fix it. Sync-conflict copies are listed there too.
 - Task ids are unique within a project. The file name is only a label: the
   `id` inside the file is what counts, and renaming a task does not rename
   its file.
@@ -83,8 +107,23 @@ Rules:
   `type`: `not_started`, `active` or `done`. Tasks refer to the column `id`,
   so renaming a column only touches `project.yaml`.
 
-Per-computer settings (the library folder, light/dark theme) are in
-`%APPDATA%\Tasks\settings.json`.
+### Compatibility between versions
+
+Libraries stay readable in both directions:
+
+- Fields are only ever **added**, never renamed or removed, and new fields
+  are optional. A library written by an older version opens unchanged; there
+  is nothing to convert. (A test opens a library written by 0.1 to prove it.)
+- An older version opening a newer library ignores what it does not know
+  (milestones, the quick list) and keeps those keys when it saves.
+
+### Settings
+
+Per-computer settings are in `%APPDATA%\Tasks\settings.json` and are edited
+on the Settings page (the cog): theme, library folder, which dashboard
+sections and extras to show, the columns for new projects, the default task
+priority, and which board columns are collapsed. Settings missing from an
+older file take their defaults.
 
 ## Code layout
 

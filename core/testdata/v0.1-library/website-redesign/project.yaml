@@ -1,0 +1,37 @@
+name: Website redesign
+color: '#2F5BEA'
+deadline: 2026-11-12
+archived: false
+created: 2026-10-29T11:37
+columns:
+  - id: todo
+    name: To do
+    type: not_started
+  - id: in-progress
+    name: In progress
+    type: active
+  - id: waiting
+    name: Waiting
+    type: active
+  - id: testing
+    name: Testing
+    type: active
+  - id: done
+    name: Done
+    type: done
+description: New marketing site for the studio
+notes:
+  - id: 3
+    created: 2026-10-29T11:38
+    edited: null
+    text: Hosting stays with the current provider.
+  - id: 2
+    created: 2026-10-29T11:37
+    edited: null
+    text: Client wants the launch before their November campaign starts.
+  - id: 1
+    created: 2026-10-29T11:37
+    edited: null
+    text: |-
+      Kickoff call done.
+      Scope: Home, About, Services, Blog, Contact.

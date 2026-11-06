@@ -19,7 +19,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	app := &App{}
+	app := newApp()
 	err = wails.Run(&options.App{
 		Title:            "Tasks",
 		Width:            1360,

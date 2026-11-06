@@ -15,6 +15,8 @@ type ProjectInput struct {
 	Color       string `json:"color"`
 	Description string `json:"description"`
 	Deadline    string `json:"deadline"` // YYYY-MM-DD or ""
+	// Columns for the new board; empty means DefaultColumns.
+	Columns []Column `json:"columns"`
 }
 
 // ProjectPatch changes only the fields that are set. Deadline "" clears it.
@@ -43,6 +45,7 @@ type TaskPatch struct {
 	Deadline    *string   `json:"deadline"`
 	WaitingFor  *string   `json:"waitingFor"`
 	Status      *string   `json:"status"`
+	Milestone   *int      `json:"milestone"` // 0 unlinks
 	// CompleteSubtasks confirms moving a task to a done column while it
 	// still has open subtasks; they are completed too.
 	CompleteSubtasks bool `json:"completeSubtasks"`
@@ -63,7 +66,12 @@ func (s *Store) CreateProject(in ProjectInput) (string, error) {
 	if name == "" {
 		return "", errors.New("a project needs a name")
 	}
-	p := &Project{Name: name, Color: in.Color, Description: in.Description, Created: StampOf(s.now()), Columns: DefaultColumns()}
+	p := &Project{Name: name, Color: in.Color, Description: in.Description, Created: StampOf(s.now()), Columns: in.Columns}
+	if len(p.Columns) == 0 {
+		p.Columns = DefaultColumns()
+	} else if err := ValidateColumns(p.Columns); err != nil {
+		return "", err
+	}
 	if p.Color == "" {
 		p.Color = "#2F5BEA"
 	}
@@ -213,6 +221,16 @@ func (s *Store) UpdateTask(slug string, id int, in TaskPatch) (StatusResult, err
 	}
 	if in.WaitingFor != nil {
 		t.WaitingFor = optText(strings.TrimSpace(*in.WaitingFor))
+	}
+	if in.Milestone != nil {
+		if *in.Milestone == 0 {
+			t.Milestone = nil
+		} else if _, ok := ps.p.milestone(*in.Milestone); ok {
+			m := *in.Milestone
+			t.Milestone = &m
+		} else {
+			return StatusResult{}, fmt.Errorf("milestone %d not found", *in.Milestone)
+		}
 	}
 	if in.Status != nil && *in.Status != t.Status {
 		res, err := s.changeStatus(ps, &t, *in.Status, in.CompleteSubtasks)

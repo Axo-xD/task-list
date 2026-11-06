@@ -1,0 +1,19 @@
+id: 4
+title: Review ALL homepage copy
+status: in-progress
+priority: low
+deadline: 2026-10-29
+waiting_for: client
+parent: null
+position: 1000
+created: 2026-10-29T11:37
+updated: 2026-10-29T11:38
+completed: null
+description: |-
+  Go through all the page copy before the site goes to build.
+  Flag anything that needs input from the client.
+notes:
+  - id: 1
+    created: 2026-10-29T11:37
+    edited: 2026-10-29T11:38
+    text: First pass done; pricing confirmed.

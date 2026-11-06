@@ -8,5 +8,12 @@
   "wailsjsdir": "./build/wailsjs",
   "author": {
     "name": "Axo-xD"
+  },
+  "info": {
+    "productName": "Tasks",
+    "productVersion": "0.3.0",
+    "companyName": "Axo-xD",
+    "copyright": "",
+    "comments": "Personal task manager with Kanban boards"
   }
 }

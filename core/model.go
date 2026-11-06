@@ -61,16 +61,31 @@ type Note struct {
 	Text    string `yaml:"text" json:"text"`
 }
 
+// Milestone is a dated goal in a project, such as a SAT or a delivery.
+// Tasks link to it by id.
+type Milestone struct {
+	ID          int    `yaml:"id" json:"id"`
+	Title       string `yaml:"title" json:"title"`
+	Date        Date   `yaml:"date" json:"date"`
+	Description string `yaml:"description,omitempty" json:"description"`
+	Completed   *Stamp `yaml:"completed" json:"completed"`
+}
+
 // Project is the content of <library>/<slug>/project.yaml.
+//
+// Compatibility: fields are only ever added, and new ones are optional
+// (omitempty), so files written by older versions load unchanged and older
+// versions keep the new keys when they save.
 type Project struct {
-	Name        string   `yaml:"name"`
-	Color       string   `yaml:"color"`
-	Deadline    *Date    `yaml:"deadline"`
-	Archived    bool     `yaml:"archived"`
-	Created     Stamp    `yaml:"created"`
-	Columns     []Column `yaml:"columns"`
-	Description string   `yaml:"description"`
-	Notes       []Note   `yaml:"notes"`
+	Name        string      `yaml:"name"`
+	Color       string      `yaml:"color"`
+	Deadline    *Date       `yaml:"deadline"`
+	Archived    bool        `yaml:"archived"`
+	Created     Stamp       `yaml:"created"`
+	Columns     []Column    `yaml:"columns"`
+	Milestones  []Milestone `yaml:"milestones,omitempty"` // since 0.3
+	Description string      `yaml:"description"`
+	Notes       []Note      `yaml:"notes"`
 
 	Slug string `yaml:"-"` // folder name; the project's id
 	file fileInfo
@@ -116,10 +131,45 @@ type Task struct {
 	Created     Stamp    `yaml:"created"`
 	Updated     Stamp    `yaml:"updated"`
 	Completed   *Stamp   `yaml:"completed"`
+	Milestone   *int     `yaml:"milestone,omitempty"` // since 0.3
 	Description string   `yaml:"description"`
 	Notes       []Note   `yaml:"notes"`
 
 	file fileInfo
+}
+
+func (p *Project) milestone(id int) (*Milestone, bool) {
+	for i := range p.Milestones {
+		if p.Milestones[i].ID == id {
+			return &p.Milestones[i], true
+		}
+	}
+	return nil, false
+}
+
+// ValidateColumns checks a column list: unique non-empty ids and names,
+// known types, and at least one not-started and one done column (ticking a
+// task done or undone needs both).
+func ValidateColumns(cols []Column) error {
+	seen := map[string]bool{}
+	var open, done bool
+	for _, c := range cols {
+		switch {
+		case c.ID == "" || c.Name == "":
+			return fmt.Errorf("every column needs a name")
+		case seen[c.ID]:
+			return fmt.Errorf("two columns are both called %q", c.Name)
+		case c.Type != NotStarted && c.Type != Active && c.Type != Done:
+			return fmt.Errorf("column %q has an unknown type %q", c.Name, c.Type)
+		}
+		seen[c.ID] = true
+		open = open || c.Type == NotStarted
+		done = done || c.Type == Done
+	}
+	if !open || !done {
+		return fmt.Errorf("there must be at least one not-started column and one done column")
+	}
+	return nil
 }
 
 func (t *Task) parentID() int {
