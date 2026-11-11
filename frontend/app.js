@@ -749,7 +749,15 @@ function showDialog(html, onSubmit, extra = {}) {
         if (result !== false) { resolve(true); dlg.close(); }
       } catch (err) { fail(err); }
     });
-    dlg.addEventListener('close', () => resolve(null), { once: true });
+    // The close event arrives a moment after close(). If another dialog has
+    // been opened in the meantime (delete → "are you sure?"), that event
+    // belongs to the previous one and must not cancel this one.
+    const onClose = () => {
+      if (dlg.open) return;
+      dlg.removeEventListener('close', onClose);
+      resolve(null);
+    };
+    dlg.addEventListener('close', onClose);
   });
 }
 
