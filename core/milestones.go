@@ -31,11 +31,8 @@ func (s *Store) AddMilestone(slug string, in MilestoneInput) (int, error) {
 		return 0, errors.New("a milestone needs a date")
 	}
 	m.Date = d
-	err = s.editMilestones(slug, func(p *Project) error {
-		for _, x := range p.Milestones {
-			m.ID = max(m.ID, x.ID)
-		}
-		m.ID++
+	err = s.editMilestones(slug, func(p *Project, ps *projectState) error {
+		m.ID = ps.nextMilestoneID()
 		p.Milestones = append(p.Milestones, m)
 		return nil
 	})
@@ -43,7 +40,7 @@ func (s *Store) AddMilestone(slug string, in MilestoneInput) (int, error) {
 }
 
 func (s *Store) UpdateMilestone(slug string, id int, in MilestonePatch) error {
-	return s.editMilestones(slug, func(p *Project) error {
+	return s.editMilestones(slug, func(p *Project, _ *projectState) error {
 		m, ok := p.milestone(id)
 		if !ok {
 			return fmt.Errorf("milestone %d not found", id)
@@ -79,7 +76,7 @@ func (s *Store) UpdateMilestone(slug string, id int, in MilestonePatch) error {
 
 // DeleteMilestone removes a milestone and unlinks the tasks that pointed to it.
 func (s *Store) DeleteMilestone(slug string, id int) error {
-	err := s.editMilestones(slug, func(p *Project) error {
+	err := s.editMilestones(slug, func(p *Project, _ *projectState) error {
 		for i, m := range p.Milestones {
 			if m.ID == id {
 				p.Milestones = append(p.Milestones[:i:i], p.Milestones[i+1:]...)
@@ -111,7 +108,7 @@ func (s *Store) DeleteMilestone(slug string, id int) error {
 
 // editMilestones edits a copy of the project, keeps milestones in date
 // order, and saves it.
-func (s *Store) editMilestones(slug string, edit func(*Project) error) error {
+func (s *Store) editMilestones(slug string, edit func(*Project, *projectState) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ps, err := s.project(slug)
@@ -120,7 +117,7 @@ func (s *Store) editMilestones(slug string, edit func(*Project) error) error {
 	}
 	p := *ps.p
 	p.Milestones = append([]Milestone{}, ps.p.Milestones...)
-	if err := edit(&p); err != nil {
+	if err := edit(&p, ps); err != nil {
 		return err
 	}
 	sort.SliceStable(p.Milestones, func(i, j int) bool { return p.Milestones[i].Date.Before(p.Milestones[j].Date.Time) })

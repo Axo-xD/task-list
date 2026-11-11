@@ -31,8 +31,6 @@ func must[T any](t *testing.T) func(T, error) T {
 	}
 }
 
-func ptr[T any](v T) *T { return &v }
-
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

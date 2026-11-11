@@ -97,12 +97,18 @@ Rules:
   watches the folder, so edits made in a text editor or by a sync tool
   (OneDrive, Dropbox, Syncthing) show up straight away.
 - The app never overwrites a file that changed since it last read it; it
-  reloads instead. Keys it does not know about, and comments, are kept.
+  reloads instead. Keys it does not know about, and comments, are kept,
+  also inside the lists (notes, columns, milestones, quick list items).
 - A file it cannot read is listed under Settings → Files with problems and
   left alone until you fix it. Sync-conflict copies are listed there too.
-- Task ids are unique within a project. The file name is only a label: the
-  `id` inside the file is what counts, and renaming a task does not rename
-  its file.
+- A task that names a column, milestone or parent that is not there (or a
+  priority the app does not know) is listed there as well. It is shown with
+  a stand-in (first column, no milestone, top level, medium), but the file
+  keeps what it said until you change that field in the app, so nothing is
+  lost while a sync tool is still bringing over `project.yaml`.
+- Task ids are unique within a project and are not reused while the deleted
+  task is still in `.trash`. The file name is only a label: the `id` inside
+  the file is what counts, and renaming a task does not rename its file.
 - Columns are edited in `project.yaml`. Each has an `id`, a `name` and a
   `type`: `not_started`, `active` or `done`. Tasks refer to the column `id`,
   so renaming a column only touches `project.yaml`.

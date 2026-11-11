@@ -136,6 +136,38 @@ type Task struct {
 	Notes       []Note   `yaml:"notes"`
 
 	file fileInfo
+	keep kept
+}
+
+// kept holds values from the file that could not be used when it was read
+// (a column or milestone this project.yaml does not have, an unknown
+// priority, a missing parent). The task is shown with a stand-in, but the
+// file keeps what it said until that field is changed in the app: the
+// missing piece may simply not have synced yet.
+type kept struct {
+	status    *string
+	priority  *Priority
+	milestone *int
+	parent    *int
+}
+
+// onDisk is the task as it is written to its file: the kept values in place
+// of their stand-ins.
+func (t *Task) onDisk() *Task {
+	d := *t
+	if t.keep.status != nil {
+		d.Status = *t.keep.status
+	}
+	if t.keep.priority != nil {
+		d.Priority = *t.keep.priority
+	}
+	if t.keep.milestone != nil {
+		d.Milestone = t.keep.milestone
+	}
+	if t.keep.parent != nil {
+		d.Parent = t.keep.parent
+	}
+	return &d
 }
 
 func (p *Project) milestone(id int) (*Milestone, bool) {

@@ -178,10 +178,7 @@ func (s *Store) CreateTask(slug string, in TaskInput) (int, error) {
 	if col.Type == Done {
 		t.Completed = &now
 	}
-	for id := range ps.tasks {
-		t.ID = max(t.ID, id)
-	}
-	t.ID++
+	t.ID = ps.nextTaskID()
 	t.Position = endPosition(ps.siblings(t.parentID(), t.Status))
 	t.file.path = filepath.Join(s.root, slug, "tasks", taskFileName(t.ID, title))
 	if err := s.saveTask(t); err != nil {
@@ -212,7 +209,7 @@ func (s *Store) UpdateTask(slug string, id int, in TaskPatch) (StatusResult, err
 		if !in.Priority.valid() {
 			return StatusResult{}, fmt.Errorf("unknown priority %q", *in.Priority)
 		}
-		t.Priority = *in.Priority
+		t.Priority, t.keep.priority = *in.Priority, nil
 	}
 	if in.Deadline != nil {
 		if err := setDate(&t.Deadline, *in.Deadline); err != nil {
@@ -223,6 +220,7 @@ func (s *Store) UpdateTask(slug string, id int, in TaskPatch) (StatusResult, err
 		t.WaitingFor = optText(strings.TrimSpace(*in.WaitingFor))
 	}
 	if in.Milestone != nil {
+		t.keep.milestone = nil
 		if *in.Milestone == 0 {
 			t.Milestone = nil
 		} else if _, ok := ps.p.milestone(*in.Milestone); ok {
@@ -330,7 +328,7 @@ func (s *Store) changeStatus(ps *projectState, t *Task, status string, completeS
 		return StatusResult{}, fmt.Errorf("unknown status %q", status)
 	}
 	wasDone := ps.isDone(t)
-	t.Status = status
+	t.Status, t.keep.status = status, nil
 	if col.Type != Done {
 		t.Completed = nil
 		return StatusResult{}, nil
@@ -351,7 +349,7 @@ func (s *Store) changeStatus(ps *projectState, t *Task, status string, completeS
 	t.Completed = &now
 	for _, d := range open {
 		done := *d
-		done.Status, done.Completed = status, &now
+		done.Status, done.Completed, done.keep.status = status, &now, nil
 		if err := s.writeTask(ps, d, &done, true); err != nil {
 			return StatusResult{}, err
 		}
@@ -367,7 +365,7 @@ func (s *Store) DeleteTask(slug string, id int) error {
 	if err != nil {
 		return err
 	}
-	trash := filepath.Join(s.root, ".trash", slug)
+	trash := filepath.Join(s.root, trashDir, slug)
 	if err := os.MkdirAll(trash, 0o755); err != nil {
 		return err
 	}
@@ -378,6 +376,7 @@ func (s *Store) DeleteTask(slug string, id int) error {
 			s.reloadLocked()
 			return err
 		}
+		ps.trashedID = max(ps.trashedID, x.ID)
 		delete(ps.tasks, x.ID)
 		delete(s.seen, x.file.path)
 	}
@@ -466,7 +465,7 @@ func (s *Store) writeTask(ps *projectState, cur, t *Task, touch bool) error {
 }
 
 func (s *Store) saveTask(t *Task) error {
-	if err := writeYAML(&t.file, t); err != nil {
+	if err := writeYAML(&t.file, t.onDisk()); err != nil {
 		s.reloadLocked()
 		return err
 	}

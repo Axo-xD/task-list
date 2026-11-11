@@ -493,21 +493,42 @@ function timelineHTML(b) {
   const pos = (d) => (((parseDate(d).getTime() - lo) / (hi - lo)) * 100).toFixed(2);
   const msState = (m) => (m.done ? 'done' : m.date < today ? 'over' : m.date === today ? 'today' : 'open');
   const stateText = { done: 'Done', over: 'Overdue', today: 'Today', open: '' };
+  const lateText = (m) => `${plural(-daysTo(m), 'day')} late`;
+  // The count under each marker: days until the milestone, or days late.
+  const daysTo = (m) => Math.round((parseDate(m.date) - parseDate(today)) / 864e5);
+  const daysText = (m) => {
+    const st = msState(m);
+    if (st === 'done') return '';
+    if (st === 'today') return 'Today';
+    return st === 'over' ? lateText(m) : plural(daysTo(m), 'day');
+  };
+  // Labels of milestones that sit close together go on a second row.
+  let last = { at: -100, row: 0 };
+  const dayLabels = ms.map((m) => {
+    const text = daysText(m);
+    if (!text) return '';
+    const at = Number(pos(m.date));
+    const row = at - last.at < 9 && last.row === 0 ? 1 : 0;
+    last = { at, row };
+    return `<span class="tl-days ${msState(m)}${row ? ' low' : ''}" style="left: ${at}%">${esc(text)}</span>`;
+  });
+  const twoRows = dayLabels.some((l) => l.includes(' low"'));
   return `<section class="card card-pad timeline" aria-labelledby="ms-h">
     <div class="section-head"><h2 id="ms-h" style="font-size: 16px">Milestones</h2>
       <span class="muted" style="font-size: 13px">${fmtDay(b.start)} – ${fmtDay([b.project.deadline, ms[ms.length - 1].date].filter(Boolean).sort().pop())}</span></div>
-    <div class="tl-track" aria-hidden="true">
+    <div class="tl-track${twoRows ? ' tall' : ''}" aria-hidden="true">
       <div class="tl-line"></div>
       <div class="tl-today" style="left: ${pos(today)}%"><span>Today</span></div>
       ${b.project.deadline ? `<div class="tl-end" style="left: ${pos(b.project.deadline)}%"><span>Deadline</span></div>` : ''}
       ${ms.map((m, i) => `<span class="tl-marker ${msState(m)}" style="left: ${pos(m.date)}%" title="${esc(m.title)} · ${esc(fmtDay(m.date))}"><span>${i + 1}</span></span>`).join('')}
+      ${dayLabels.join('')}
     </div>
     <ol class="tl-list">${ms.map((m, i) => {
       const st = msState(m);
       return `<li><button type="button" class="tl-item ${st}" data-action="editMilestone" data-id="${m.id}">
         <span class="tl-num">${i + 1}</span>
         <span class="tl-body"><span class="tl-title">${esc(m.title)}</span>
-          <span class="tl-meta">${esc(fmtDay(m.date))}${stateText[st] ? ` · ${stateText[st]}` : ''}${m.tasksTotal ? ` · ${m.tasksDone}/${m.tasksTotal} tasks` : ''}</span></span>
+          <span class="tl-meta">${esc(fmtDay(m.date))}${stateText[st] ? ` · ${st === 'over' ? lateText(m) : stateText[st]}` : ''}${st === 'open' ? ` · in ${plural(daysTo(m), 'day')}` : ''}${m.tasksTotal ? ` · ${m.tasksDone}/${m.tasksTotal} tasks` : ''}</span></span>
       </button></li>`;
     }).join('')}</ol>
   </section>`;

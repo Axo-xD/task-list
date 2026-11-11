@@ -4,14 +4,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Problem is a file the app could not use as-is. Problem files are never
-// written by the app.
+// Problem is a file the app could not use as-is. A file that cannot be read
+// at all is never written by the app. A task with a value that cannot be
+// used (see kept) is shown with a stand-in and keeps that value on disk.
 type Problem struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
@@ -20,6 +23,9 @@ type Problem struct {
 type projectState struct {
 	p     *Project
 	tasks map[int]*Task
+	// trashedID is the highest task id among this project's deleted tasks,
+	// so a new task never takes the id of one that can still be restored.
+	trashedID int
 }
 
 // Store is the in-memory index of one library folder.
@@ -131,7 +137,7 @@ func load(root string) index {
 			problem(path, "no columns defined; using the default columns")
 			p.Columns = DefaultColumns()
 		}
-		ps := &projectState{p: p, tasks: map[int]*Task{}}
+		ps := &projectState{p: p, tasks: map[int]*Task{}, trashedID: trashedID(filepath.Join(root, trashDir, p.Slug))}
 		projects[p.Slug] = ps
 
 		taskDir := filepath.Join(dir, "tasks")
@@ -165,6 +171,7 @@ func load(root string) index {
 			if _, ok := p.column(t.Status); !ok {
 				if t.Status != "" {
 					problem(tpath, "unknown status %q; shown in %q", t.Status, p.Columns[0].Name)
+					t.keep.status = ptr(t.Status)
 				}
 				t.Status = p.Columns[0].ID
 			}
@@ -172,12 +179,13 @@ func load(root string) index {
 				t.Priority = Medium
 			} else if !t.Priority.valid() {
 				problem(tpath, "unknown priority %q; treated as medium", t.Priority)
+				t.keep.priority = ptr(t.Priority)
 				t.Priority = Medium
 			}
 			if t.Milestone != nil {
 				if _, ok := p.milestone(*t.Milestone); !ok {
 					problem(tpath, "milestone %d not found; shown without a milestone", *t.Milestone)
-					t.Milestone = nil
+					t.keep.milestone, t.Milestone = t.Milestone, nil
 				}
 			}
 			ps.tasks[t.ID] = t
@@ -195,7 +203,7 @@ func fixParents(ps *projectState, problem func(*Task, string)) {
 		if t.Parent != nil {
 			if _, ok := ps.tasks[*t.Parent]; !ok || *t.Parent == t.ID {
 				problem(t, fmt.Sprintf("parent %d not found; shown as a top-level task", *t.Parent))
-				t.Parent = nil
+				t.keep.parent, t.Parent = t.Parent, nil
 			}
 		}
 	}
@@ -204,13 +212,70 @@ func fixParents(ps *projectState, problem func(*Task, string)) {
 		for cur := t; cur.Parent != nil; cur = ps.tasks[*cur.Parent] {
 			if visited[*cur.Parent] {
 				problem(cur, "parent loop; shown as a top-level task")
-				cur.Parent = nil
+				cur.keep.parent, cur.Parent = cur.Parent, nil
 				break
 			}
 			visited[*cur.Parent] = true
 		}
 	}
 }
+
+const trashDir = ".trash"
+
+// trashName matches a file in the trash: the time it was deleted, then the
+// task's own file name, which starts with its id.
+var trashName = regexp.MustCompile(`^\d{8}-\d{6}-(\d+)[-.]`)
+
+// trashedID returns the highest task id in a project's trash folder. The id
+// is taken from the file name; a file renamed by hand is opened instead.
+func trashedID(dir string) int {
+	highest := 0
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.IsDir() || !isDataFile(e.Name()) {
+			continue
+		}
+		id := 0
+		if m := trashName.FindStringSubmatch(e.Name()); m != nil {
+			id, _ = strconv.Atoi(m[1])
+		} else {
+			var t struct {
+				ID int `yaml:"id"`
+			}
+			if _, err := readYAML(filepath.Join(dir, e.Name()), &t); err == nil {
+				id = t.ID
+			}
+		}
+		highest = max(highest, id)
+	}
+	return highest
+}
+
+// nextTaskID is one above every id in use, in the project or in its trash.
+func (ps *projectState) nextTaskID() int {
+	id := ps.trashedID
+	for used := range ps.tasks {
+		id = max(id, used)
+	}
+	return id + 1
+}
+
+// nextMilestoneID is one above every milestone id in use, counting ids that
+// tasks still point to after their milestone has gone.
+func (ps *projectState) nextMilestoneID() int {
+	id := 0
+	for _, m := range ps.p.Milestones {
+		id = max(id, m.ID)
+	}
+	for _, t := range ps.tasks {
+		if m := t.onDisk().Milestone; m != nil {
+			id = max(id, *m)
+		}
+	}
+	return id + 1
+}
+
+func ptr[T any](v T) *T { return &v }
 
 func (s *Store) project(slug string) (*projectState, error) {
 	ps, ok := s.projects[slug]

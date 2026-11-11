@@ -45,29 +45,15 @@ func readYAML(path string, v any) (fileInfo, error) {
 }
 
 // encodeYAML renders v. Keys from the original file that v does not know
-// about are kept, as are comments on known keys.
+// about are kept, and so are comments, at every level: in the file itself
+// and inside its lists (notes, columns, milestones, quick list items).
 func encodeYAML(v any, orig *yaml.Node) ([]byte, *yaml.Node, error) {
 	var n yaml.Node
 	if err := n.Encode(v); err != nil {
 		return nil, nil, err
 	}
 	if orig != nil {
-		written := map[string]*yaml.Node{}
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			written[n.Content[i].Value] = n.Content[i]
-		}
-		owned := ownedKeys(v)
-		for i := 0; i+1 < len(orig.Content); i += 2 {
-			k := orig.Content[i]
-			if nk, ok := written[k.Value]; ok {
-				nk.HeadComment, nk.LineComment, nk.FootComment = k.HeadComment, k.LineComment, k.FootComment
-				continue
-			}
-			if owned[k.Value] {
-				continue // ours, and now empty (omitempty): drop it
-			}
-			n.Content = append(n.Content, k, orig.Content[i+1])
-		}
+		mergeNode(&n, orig, reflect.TypeOf(v))
 	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -79,18 +65,74 @@ func encodeYAML(v any, orig *yaml.Node) ([]byte, *yaml.Node, error) {
 	return buf.Bytes(), &n, nil
 }
 
-// ownedKeys lists every YAML key v's struct type can write, including keys
-// left out because they are empty.
-func ownedKeys(v any) map[string]bool {
-	t := reflect.TypeOf(v)
-	for t.Kind() == reflect.Pointer {
+// mergeNode carries over from orig (the file as read) what the freshly
+// encoded node n would otherwise lose: comments, and keys that the Go type t
+// does not know. List items are matched by their id, so an item that was
+// removed takes its extras with it.
+func mergeNode(n, orig *yaml.Node, t reflect.Type) {
+	copyComments(n, orig)
+	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	keys := map[string]bool{}
+	switch {
+	case n.Kind == yaml.MappingNode && orig.Kind == yaml.MappingNode && t != nil && t.Kind() == reflect.Struct:
+		fields := ownedKeys(t)
+		written := map[string]int{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			written[n.Content[i].Value] = i
+		}
+		for i := 0; i+1 < len(orig.Content); i += 2 {
+			k, val := orig.Content[i], orig.Content[i+1]
+			if j, ok := written[k.Value]; ok {
+				copyComments(n.Content[j], k)
+				mergeNode(n.Content[j+1], val, fields[k.Value])
+				continue
+			}
+			if _, owned := fields[k.Value]; owned {
+				continue // ours, and now empty (omitempty): drop it
+			}
+			n.Content = append(n.Content, k, val)
+		}
+	case n.Kind == yaml.SequenceNode && orig.Kind == yaml.SequenceNode && t != nil && t.Kind() == reflect.Slice:
+		byID := map[string]*yaml.Node{}
+		for _, item := range orig.Content {
+			if id, ok := nodeID(item); ok {
+				byID[id] = item
+			}
+		}
+		for _, item := range n.Content {
+			if id, ok := nodeID(item); ok && byID[id] != nil {
+				mergeNode(item, byID[id], t.Elem())
+			}
+		}
+	}
+}
+
+func copyComments(n, orig *yaml.Node) {
+	n.HeadComment, n.LineComment, n.FootComment = orig.HeadComment, orig.LineComment, orig.FootComment
+}
+
+// nodeID is the value of the id key of a list item.
+func nodeID(n *yaml.Node) (string, bool) {
+	if n.Kind != yaml.MappingNode {
+		return "", false
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == "id" {
+			return n.Content[i+1].Value, true
+		}
+	}
+	return "", false
+}
+
+// ownedKeys lists every YAML key the struct type t can write, including keys
+// left out because they are empty, with the type of each.
+func ownedKeys(t reflect.Type) map[string]reflect.Type {
+	keys := map[string]reflect.Type{}
 	for i := 0; i < t.NumField(); i++ {
 		name, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
 		if name != "" && name != "-" {
-			keys[name] = true
+			keys[name] = t.Field(i).Type
 		}
 	}
 	return keys
